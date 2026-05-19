@@ -1,0 +1,76 @@
+# FrameExtractor — Development compose file
+# ------------------------------------------
+# Services:
+#   fx-postgres        메타 DB (frames_db, host port 2348)
+#   frame-extractor    FastAPI Admin UI + 백그라운드 추출 워커 (host port 9110)
+#
+# 자체 fx-net에서만 동작 (다른 레포 네트워크와 무관).
+#
+# Bring up:    docker compose up -d --build
+# Bring down:  docker compose down
+# Wipe data:   docker compose down -v
+
+name: frameextractor
+
+services:
+
+  fx-postgres:
+    image: postgres:16
+    container_name: fx-postgres
+    environment:
+      POSTGRES_DB: frames_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: dev_root_pw
+    ports:
+      - "2348:5432"
+    volumes:
+      - ./init_db.sql:/docker-entrypoint-initdb.d/01_init_db.sql:ro
+      - fx-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d frames_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - fx-net
+
+  frame-extractor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: frame-extractor
+    # bind mount 호스트 GUI 접근용. 호스트 UID가 다르면 이 라인을 조정/삭제.
+    user: "1000:1000"
+    environment:
+      FX_HTTP_HOST: "0.0.0.0"
+      FX_HTTP_PORT: "9110"
+      FX_DB_HOST: "fx-postgres"
+      FX_DB_PORT: "5432"
+      FX_DB_NAME: "frames_db"
+      FX_DB_USER: "extractor_role"
+      FX_DB_PASSWORD: "dev_extractor_pw"
+      FX_MEDIA_DIR: "/data/media"
+      FX_FRAMES_DIR: "/data/frames"
+      FX_WORKERS: "2"
+      FX_DEFAULT_TARGET_FPS: "5"
+      FX_MAX_UPLOAD_MB: "2048"
+      FX_LOG_LEVEL: "INFO"
+      FX_LOG_FORMAT: "json"
+    ports:
+      - "9110:9110"
+    volumes:
+      - ./media:/data/media
+      - ./frames:/data/frames
+    depends_on:
+      fx-postgres:
+        condition: service_healthy
+    networks:
+      - fx-net
+    restart: unless-stopped
+
+volumes:
+  fx-pgdata:
+
+networks:
+  fx-net:
+    driver: bridge

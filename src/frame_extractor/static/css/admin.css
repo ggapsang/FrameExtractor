@@ -1,0 +1,174 @@
+/* FrameExtractor Admin — Win9x/2000 톤
+   (SocketDaim admin.css에서 토큰 차용, 5-area grid는 제거하고 단순 레이아웃) */
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #ffffff;
+  color: #000;
+  font-family: "MS Sans Serif", "Tahoma", sans-serif;
+  font-size: 12px;
+}
+
+a { color: #000080; }
+a:hover { color: #0000ff; }
+
+.mono { font-family: "Courier New", monospace; }
+.muted { color: #666; }
+.small { font-size: 11px; }
+.error { color: #b00; }
+
+.topnav {
+  position: sticky; top: 0; z-index: 10;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 12px;
+  background: #e0e0e0;
+  border-bottom: 1px solid #999;
+}
+.topnav .title {
+  font-weight: bold;
+  font-size: 13px;
+  color: #000;
+  text-decoration: none;
+}
+
+.main { padding: 12px 16px; max-width: 1400px; }
+
+/* ---- fieldset (panels) -------------------------------------------------- */
+
+fieldset {
+  border: 1px solid #999;
+  margin: 12px 0;
+  padding: 10px 12px;
+  background: #f8f8f8;
+}
+legend {
+  font-weight: bold;
+  padding: 0 6px;
+  background: #e0e0e0;
+  border: 1px solid #999;
+}
+
+/* ---- buttons ------------------------------------------------------------ */
+
+.btn, button.btn {
+  border: 2px outset #c0c0c0;
+  background: #d4d0c8;
+  color: #000;
+  font-family: inherit;
+  font-size: 11px;
+  padding: 2px 10px;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-block;
+}
+.btn:active             { border-style: inset; }
+.btn:disabled           { color: #888; cursor: default; }
+.btn-primary            { background: #cfe2f3; }
+.btn-danger             { background: #f4cccc; }
+
+input[type=text], input[type=number], input[type=file], select {
+  border: 1px solid #999;
+  background: #fff;
+  padding: 2px 4px;
+  font-family: inherit;
+  font-size: 11px;
+}
+input[type=number] { width: 110px; }
+
+/* ---- tables ------------------------------------------------------------- */
+
+table.grid {
+  border-collapse: collapse;
+  width: 100%;
+  margin-top: 4px;
+}
+table.grid th, table.grid td {
+  border: 1px solid #ccc;
+  padding: 3px 6px;
+  text-align: left;
+  vertical-align: middle;
+}
+table.grid thead th {
+  background: #e0e0e0;
+}
+table.grid tbody tr:nth-child(even) { background: #f3f3f3; }
+
+table.kv {
+  border-collapse: collapse;
+}
+table.kv th {
+  text-align: left;
+  padding: 2px 12px 2px 0;
+  font-weight: normal;
+  color: #555;
+  vertical-align: top;
+  width: 130px;
+}
+table.kv td { padding: 2px 0; }
+
+table.form-grid {
+  border-collapse: collapse;
+}
+table.form-grid th {
+  text-align: left;
+  padding: 4px 12px 4px 0;
+  font-weight: normal;
+  width: 160px;
+  vertical-align: middle;
+}
+table.form-grid td { padding: 4px 0; }
+
+/* ---- job status badges ------------------------------------------------- */
+
+.status {
+  display: inline-block;
+  padding: 1px 8px;
+  border: 1px solid #999;
+}
+.status-queued    { background: #fffacd; }
+.status-running   { background: #cfe2f3; }
+.status-done      { background: #d9ead3; }
+.status-failed    { background: #f4cccc; }
+.status-cancelled { background: #e0e0e0; color: #555; }
+
+/* ---- gallery ----------------------------------------------------------- */
+
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+  margin-top: 8px;
+}
+figure.thumb {
+  margin: 0;
+  border: 1px solid #999;
+  background: #fff;
+  padding: 4px;
+}
+figure.thumb img {
+  width: 100%;
+  height: 130px;
+  object-fit: cover;
+  display: block;
+  border: 1px solid #ccc;
+}
+figure.thumb figcaption {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 4px;
+  font-size: 11px;
+  color: #444;
+}
+figure.thumb figcaption .btn {
+  padding: 0 6px;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+/* ---- health indicator -------------------------------------------------- */
+#health-indicator.ok   { color: #2a7; }
+#health-indicator.bad  { color: #c33; }

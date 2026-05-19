@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block content %}
+
+<fieldset>
+  <legend>영상 업로드</legend>
+  <form id="upload-form" enctype="multipart/form-data">
+    <div class="upload-mode">
+      <label>
+        <input type="radio" name="upload-mode" value="files" checked>
+        파일 선택 <span class="muted">(Ctrl/Shift로 여러 개)</span>
+      </label>
+      &nbsp;&nbsp;
+      <label>
+        <input type="radio" name="upload-mode" value="folder">
+        폴더 선택 <span class="muted">(영상 파일만 자동 필터)</span>
+      </label>
+    </div>
+    <div class="upload-inputs">
+      <input type="file" id="upload-input-files" multiple
+             accept="video/*,.mp4,.mov,.avi,.mkv,.webm,.m4v">
+      <input type="file" id="upload-input-folder" multiple
+             webkitdirectory directory mozdirectory style="display:none">
+    </div>
+    <p>
+      <button type="submit" class="btn btn-primary">업로드</button>
+      <span class="muted mono" id="upload-status">(최대 {{ max_upload_mb }} MB / 파일)</span>
+    </p>
+  </form>
+</fieldset>
+
+<fieldset>
+  <legend>업로드된 영상 ({{ videos|length }})</legend>
+  {% if videos %}
+  <table class="grid">
+    <thead>
+      <tr>
+        <th>파일명</th>
+        <th>확장자</th>
+        <th>해상도</th>
+        <th>fps</th>
+        <th>duration</th>
+        <th>크기</th>
+        <th>업로드</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for v in videos %}
+      <tr>
+        <td><a href="/videos/{{ v.id }}">{{ v.filename }}</a></td>
+        <td class="mono">{{ v.container_ext }}</td>
+        <td class="mono">{% if v.width %}{{ v.width }}×{{ v.height }}{% else %}-{% endif %}</td>
+        <td class="mono">{% if v.src_fps %}{{ '%.2f'|format(v.src_fps) }}{% else %}-{% endif %}</td>
+        <td class="mono">{% if v.duration_sec %}{{ '%.1f'|format(v.duration_sec) }}s{% else %}-{% endif %}</td>
+        <td class="mono">{% if v.size_bytes %}{{ (v.size_bytes / 1024 / 1024) | round(1) }} MB{% else %}-{% endif %}</td>
+        <td class="mono">{{ v.uploaded_at[:19] if v.uploaded_at else '' }}</td>
+        <td>
+          <button class="btn btn-danger" data-action="delete-video" data-id="{{ v.id }}">삭제</button>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">아직 업로드된 영상이 없습니다.</p>
+  {% endif %}
+</fieldset>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  Admin.bindUpload(document.getElementById('upload-form'), document.getElementById('upload-status'));
+  Admin.bindDeleteVideo();
+</script>
+{% endblock %}

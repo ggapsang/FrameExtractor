@@ -1,0 +1,27 @@
+# FrameExtractor — Python dependencies
+# Python 3.11+
+
+# DB
+asyncpg>=0.30.0
+
+# Config
+pydantic>=2.7.0
+pydantic-settings>=2.3.0
+
+# Logging
+structlog>=24.1.0
+
+# HTTP server + templates
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+jinja2>=3.1.0
+python-multipart>=0.0.9
+
+# Video / image
+opencv-python-headless>=4.10
+numpy>=1.26
+
+# Test
+pytest>=8.2.0
+pytest-asyncio>=0.23.0
+httpx>=0.27.0

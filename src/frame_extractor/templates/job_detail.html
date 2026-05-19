@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block content %}
+
+<p>
+  <a href="/">← 영상 목록</a>
+  {% if video %} / <a href="/videos/{{ video.id }}">{{ video.filename }}</a>{% endif %}
+</p>
+
+<fieldset>
+  <legend>Job {{ job.id[:8] }}</legend>
+  <table class="kv">
+    <tr><th>id</th>            <td class="mono">{{ job.id }}</td></tr>
+    <tr><th>video</th>         <td class="mono">{% if video %}<a href="/videos/{{ video.id }}">{{ video.filename }}</a>{% else %}-{% endif %}</td></tr>
+    <tr><th>status</th>        <td class="mono status status-{{ job.status }}" id="job-status">{{ job.status }}</td></tr>
+    <tr><th>progress</th>      <td class="mono">
+                                  <span id="job-progress">{{ job.progress_pct }}</span>%
+                                  (<span id="job-done">{{ job.frames_done }}</span>
+                                  / <span id="job-total">{{ job.frames_total or '?' }}</span>)
+                                </td></tr>
+    <tr><th>created_at</th>    <td class="mono">{{ job.created_at }}</td></tr>
+    <tr><th>started_at</th>    <td class="mono">{{ job.started_at or '-' }}</td></tr>
+    <tr><th>finished_at</th>   <td class="mono">{{ job.finished_at or '-' }}</td></tr>
+    <tr><th>params</th>        <td class="mono small">{{ job.params | tojson }}</td></tr>
+    {% if job.error_message %}
+    <tr><th>error</th>         <td class="mono error">{{ job.error_message }}</td></tr>
+    {% endif %}
+  </table>
+  <p>
+    {% if job.status in ('queued','running') %}
+      <button class="btn btn-danger" data-action="cancel-job" data-id="{{ job.id }}">취소</button>
+    {% endif %}
+  </p>
+</fieldset>
+
+<fieldset>
+  <legend>추출된 프레임 (총 {{ total_frames }})</legend>
+  {% if frames %}
+  <div class="gallery">
+    {% for f in frames %}
+      {% set rel = f.file_path.split('/data/frames/')[1] if '/data/frames/' in f.file_path else f.file_path %}
+      <figure class="thumb" data-frame-id="{{ f.id }}">
+        <a href="/frames/{{ rel }}" target="_blank">
+          <img src="/frames/{{ rel }}" alt="frame {{ f.frame_index }}" loading="lazy">
+        </a>
+        <figcaption class="mono">
+          #{{ f.frame_index }} · {{ '%.2f'|format(f.time_sec) }}s
+          <button class="btn btn-danger" data-action="delete-frame" data-id="{{ f.id }}">×</button>
+        </figcaption>
+      </figure>
+    {% endfor %}
+  </div>
+  {% if total_frames > frames|length %}
+    <p class="muted">상위 {{ frames|length }}개만 표시 (전체 {{ total_frames }}개). 페이지네이션은 추후 추가.</p>
+  {% endif %}
+  {% else %}
+  <p class="muted">아직 추출된 프레임이 없습니다.</p>
+  {% endif %}
+</fieldset>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  Admin.bindCancelJob();
+  Admin.bindDeleteFrame();
+  Admin.startJobPolling('{{ job.id }}', {{ 1 if job.status in ('queued','running') else 0 }});
+</script>
+{% endblock %}

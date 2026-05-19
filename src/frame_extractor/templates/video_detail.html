@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block content %}
+
+<p><a href="/">← 영상 목록</a></p>
+
+<fieldset>
+  <legend>{{ video.filename }}</legend>
+  <table class="kv">
+    <tr><th>id</th>           <td class="mono">{{ video.id }}</td></tr>
+    <tr><th>확장자</th>        <td class="mono">{{ video.container_ext }}</td></tr>
+    <tr><th>해상도</th>        <td class="mono">{% if video.width %}{{ video.width }}×{{ video.height }}{% else %}-{% endif %}</td></tr>
+    <tr><th>원본 fps</th>      <td class="mono">{% if video.src_fps %}{{ '%.3f'|format(video.src_fps) }}{% else %}-{% endif %}</td></tr>
+    <tr><th>duration</th>     <td class="mono">{% if video.duration_sec %}{{ '%.2f'|format(video.duration_sec) }} s{% else %}-{% endif %}</td></tr>
+    <tr><th>크기</th>          <td class="mono">{% if video.size_bytes %}{{ (video.size_bytes / 1024 / 1024) | round(2) }} MB{% else %}-{% endif %}</td></tr>
+    <tr><th>uploaded_at</th>  <td class="mono">{{ video.uploaded_at }}</td></tr>
+    <tr><th>file_path</th>    <td class="mono">{{ video.file_path }}</td></tr>
+  </table>
+  <p>
+    <a href="/media/{{ video.id }}.{{ video.container_ext }}" target="_blank">원본 다운로드</a>
+  </p>
+</fieldset>
+
+<fieldset>
+  <legend>새 추출 작업</legend>
+  <form id="job-form" data-video-id="{{ video.id }}">
+    <table class="form-grid">
+      <tr>
+        <th><label for="sampling_mode">샘플링 모드</label></th>
+        <td>
+          <select name="sampling_mode" id="sampling_mode">
+            <option value="uniform" selected>uniform (균일 추출)</option>
+            <option value="random_n">random_n (랜덤 N장)</option>
+          </select>
+        </td>
+      </tr>
+
+      <tr class="row-uniform">
+        <th><label for="target_fps">target_fps</label></th>
+        <td>
+          <input type="number" step="0.1" name="target_fps" id="target_fps" value="{{ default_target_fps }}" min="0.1" max="240">
+          <span class="muted">초당 추출할 프레임 수 (다운샘플링만)</span>
+        </td>
+      </tr>
+      <tr class="row-uniform">
+        <th><label for="interval_sec">interval_sec</label></th>
+        <td>
+          <input type="number" step="0.01" name="interval_sec" id="interval_sec" placeholder="(미사용)" min="0.01">
+          <span class="muted">지정 시 매 X초마다 1장 (target_fps 무시)</span>
+        </td>
+      </tr>
+
+      <tr class="row-random" style="display:none">
+        <th><label for="random_n">random_n</label></th>
+        <td>
+          <input type="number" step="1" name="random_n" id="random_n" value="20" min="1" max="1000000">
+          <span class="muted">랜덤 추출할 총 장수</span>
+        </td>
+      </tr>
+      <tr class="row-random" style="display:none">
+        <th><label for="seed">seed</label></th>
+        <td>
+          <input type="number" step="1" name="seed" id="seed" placeholder="(미지정)">
+          <span class="muted">재현 가능한 무작위. 비우면 매번 다름</span>
+        </td>
+      </tr>
+
+      <tr>
+        <th><label>head/tail 자르기</label></th>
+        <td>
+          head <input type="number" step="0.1" name="head_skip_sec" id="head_skip_sec" value="0" min="0" style="width:80px"> 초
+          &nbsp;&nbsp;
+          tail <input type="number" step="0.1" name="tail_skip_sec" id="tail_skip_sec" value="0" min="0" style="width:80px"> 초
+        </td>
+      </tr>
+
+      <tr>
+        <th><label>resize</label></th>
+        <td>
+          w <input type="number" step="1" name="resize_w" id="resize_w" placeholder="(원본)" min="1" max="16384" style="width:90px">
+          ×
+          h <input type="number" step="1" name="resize_h" id="resize_h" placeholder="(원본)" min="1" max="16384" style="width:90px">
+          <span class="muted">둘 다 비우면 원본 해상도</span>
+        </td>
+      </tr>
+    </table>
+
+    <p>
+      <button type="submit" class="btn btn-primary">추출 시작</button>
+      <span class="muted mono" id="job-status"></span>
+    </p>
+  </form>
+</fieldset>
+
+<fieldset>
+  <legend>추출 작업 이력 ({{ jobs|length }})</legend>
+  {% if jobs %}
+  <table class="grid">
+    <thead>
+      <tr>
+        <th>created</th>
+        <th>status</th>
+        <th>progress</th>
+        <th>frames</th>
+        <th>params</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for j in jobs %}
+      <tr data-job-id="{{ j.id }}">
+        <td class="mono">{{ j.created_at[:19] if j.created_at else '' }}</td>
+        <td class="mono status status-{{ j.status }}">{{ j.status }}</td>
+        <td class="mono">{{ j.progress_pct }}%</td>
+        <td class="mono">{{ j.frames_done }} / {{ j.frames_total or '?' }}</td>
+        <td class="mono small">{{ j.params | tojson }}</td>
+        <td>
+          <a class="btn" href="/jobs/{{ j.id }}">상세</a>
+          {% if j.status in ('queued','running') %}
+            <button class="btn btn-danger" data-action="cancel-job" data-id="{{ j.id }}">취소</button>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">추출 작업이 아직 없습니다.</p>
+  {% endif %}
+</fieldset>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  Admin.bindJobForm(document.getElementById('job-form'), document.getElementById('job-status'));
+  Admin.bindCancelJob();
+  Admin.bindSamplingModeToggle(document.getElementById('sampling_mode'));
+</script>
+{% endblock %}
