@@ -30,6 +30,16 @@ class Settings(BaseSettings):
     media_dir: str = "/data/media"
     frames_dir: str = "/data/frames"
 
+    # Server-side import root.
+    #
+    # Opt-in feature for environments where browser file upload is blocked
+    # (corporate proxies, AV, MIME filters). When set, files dropped under
+    # this directory (e.g. via SCP, network share, container bind mount) can
+    # be registered through the /api/import endpoint without going through
+    # multipart upload. Empty = disabled; the index page hides the import
+    # panel and the endpoints return 404.
+    import_dir: str = ""
+
     # Worker pool
     workers: int = 2
 
@@ -38,6 +48,11 @@ class Settings(BaseSettings):
 
     # Upload limit (multipart)
     max_upload_mb: int = 2048
+
+    # Whether the import operation moves the file (vs. copies). Moving is
+    # cheaper for large videos on the same volume; copying preserves the
+    # original under FX_IMPORT_DIR.
+    import_move: bool = False
 
     # Logging
     log_level: str = "INFO"
@@ -49,3 +64,7 @@ class Settings(BaseSettings):
             f"postgresql://{self.db_user}:{self.db_password}"
             f"@{self.db_host}:{self.db_port}/{self.db_name}"
         )
+
+    @property
+    def import_enabled(self) -> bool:
+        return bool(self.import_dir.strip())

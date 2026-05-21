@@ -2,7 +2,7 @@
 {% block content %}
 
 <fieldset>
-  <legend>영상 업로드</legend>
+  <legend>영상 업로드 (브라우저)</legend>
   <form id="upload-form" enctype="multipart/form-data">
     <div class="upload-mode">
       <label>
@@ -27,6 +27,35 @@
     </p>
   </form>
 </fieldset>
+
+{% if import_enabled %}
+<fieldset>
+  <legend>서버 경로에서 가져오기</legend>
+  <p class="muted small">
+    브라우저 업로드가 막힌 환경용. SCP/네트워크 드라이브로
+    <span class="mono">{{ import_dir }}</span> 에 떨궈둔 영상을 한 번에 등록.
+  </p>
+  <p>
+    <button type="button" class="btn" id="import-scan-btn">스캔</button>
+    <button type="button" class="btn btn-primary" id="import-all-btn" disabled>전체 가져오기</button>
+    <button type="button" class="btn" id="import-selected-btn" disabled>선택 가져오기</button>
+    <span class="muted mono" id="import-status"></span>
+  </p>
+  <div id="import-results" style="display:none">
+    <table class="grid" id="import-table">
+      <thead>
+        <tr>
+          <th style="width:24px"><input type="checkbox" id="import-check-all"></th>
+          <th>경로 (상대)</th>
+          <th>확장자</th>
+          <th>크기</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</fieldset>
+{% endif %}
 
 <fieldset>
   <legend>업로드된 영상 ({{ videos|length }})</legend>
@@ -72,5 +101,16 @@
 <script>
   Admin.bindUpload(document.getElementById('upload-form'), document.getElementById('upload-status'));
   Admin.bindDeleteVideo();
+  {% if import_enabled %}
+  Admin.bindImport({
+    scanBtn:     document.getElementById('import-scan-btn'),
+    allBtn:      document.getElementById('import-all-btn'),
+    selectedBtn: document.getElementById('import-selected-btn'),
+    statusEl:    document.getElementById('import-status'),
+    container:   document.getElementById('import-results'),
+    table:       document.getElementById('import-table'),
+    checkAll:    document.getElementById('import-check-all'),
+  });
+  {% endif %}
 </script>
 {% endblock %}

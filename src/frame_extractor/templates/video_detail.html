@@ -16,7 +16,12 @@
     <tr><th>file_path</th>    <td class="mono">{{ video.file_path }}</td></tr>
   </table>
   <p>
-    <a href="/media/{{ video.id }}.{{ video.container_ext }}" target="_blank">원본 다운로드</a>
+    <a class="btn" href="/api/videos/{{ video.id }}/download" download>
+      원본 다운로드
+    </a>
+    <a class="btn" href="/media/{{ video.id }}.{{ video.container_ext }}" target="_blank">
+      새 탭에서 열기
+    </a>
   </p>
 </fieldset>
 

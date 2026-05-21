@@ -168,6 +168,10 @@ figure.thumb figcaption .btn {
   font-size: 11px;
   line-height: 16px;
 }
+.thumb-actions {
+  display: inline-flex;
+  gap: 2px;
+}
 
 /* ---- health indicator -------------------------------------------------- */
 #health-indicator.ok   { color: #2a7; }

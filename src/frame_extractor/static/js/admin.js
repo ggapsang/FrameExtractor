@@ -79,6 +79,111 @@
     });
   }
 
+  // --- Server-side import ----------------------------------------------
+  // For environments where browser file upload is blocked. Operator drops
+  // videos into FX_IMPORT_DIR via SCP / network share, then this UI scans
+  // and registers them without any multipart traffic.
+  function bindImport(els) {
+    if (!els || !els.scanBtn) return;
+    const { scanBtn, allBtn, selectedBtn, statusEl, container, table, checkAll } = els;
+    const tbody = table.querySelector('tbody');
+    let lastScan = [];
+
+    function fmtMB(n) {
+      if (!n && n !== 0) return '-';
+      return (n / 1024 / 1024).toFixed(1) + ' MB';
+    }
+
+    function renderRows(files) {
+      tbody.innerHTML = '';
+      files.forEach(function (f, i) {
+        const tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td><input type="checkbox" class="import-pick" data-name="' +
+          f.name.replace(/"/g, '&quot;') + '"></td>' +
+          '<td class="mono small">' + f.name + '</td>' +
+          '<td class="mono">' + f.ext + '</td>' +
+          '<td class="mono">' + fmtMB(f.size_bytes) + '</td>';
+        tbody.appendChild(tr);
+      });
+    }
+
+    scanBtn.addEventListener('click', async function () {
+      statusEl.textContent = 'scanning...';
+      allBtn.disabled = true;
+      selectedBtn.disabled = true;
+      try {
+        const r = await jsonFetch('/api/import');
+        lastScan = r.files || [];
+        renderRows(lastScan);
+        container.style.display = lastScan.length ? '' : 'none';
+        statusEl.textContent = lastScan.length
+          ? (lastScan.length + ' file(s) found under ' + r.root)
+          : ('empty: ' + r.root);
+        allBtn.disabled = !lastScan.length;
+        selectedBtn.disabled = !lastScan.length;
+      } catch (e) {
+        statusEl.textContent = 'scan error: ' + e.message;
+      }
+    });
+
+    if (checkAll) {
+      checkAll.addEventListener('change', function () {
+        tbody.querySelectorAll('.import-pick').forEach(function (cb) {
+          cb.checked = checkAll.checked;
+        });
+      });
+    }
+
+    async function runImport(names) {
+      const label = names.length ? (names.length + ' selected') : 'all';
+      statusEl.textContent = 'importing ' + label + '...';
+      allBtn.disabled = true;
+      selectedBtn.disabled = true;
+      try {
+        const r = await jsonFetch('/api/import', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ names: names }),
+        });
+        const u = (r.uploaded || []).length;
+        const f = (r.failed || []).length;
+        const s = (r.skipped || []).length;
+        const parts = [u + ' imported'];
+        if (s) parts.push(s + ' skipped');
+        if (f) parts.push(f + ' failed');
+        statusEl.textContent = parts.join(', ') + (r.moved ? ' (moved)' : ' (copied)');
+        if (f) {
+          const detail = r.failed.map(function (x) {
+            return '· ' + x.filename + ' — ' + x.error;
+          }).join('\n');
+          alert('일부 실패:\n' + detail);
+        }
+        if (u > 0) {
+          setTimeout(function () { location.reload(); }, 700);
+        }
+      } catch (e) {
+        statusEl.textContent = 'error: ' + e.message;
+      } finally {
+        allBtn.disabled = !lastScan.length;
+        selectedBtn.disabled = !lastScan.length;
+      }
+    }
+
+    allBtn.addEventListener('click', function () { runImport([]); });
+    selectedBtn.addEventListener('click', function () {
+      const names = [];
+      tbody.querySelectorAll('.import-pick:checked').forEach(function (cb) {
+        names.push(cb.dataset.name);
+      });
+      if (!names.length) {
+        statusEl.textContent = 'no rows selected';
+        return;
+      }
+      runImport(names);
+    });
+  }
+
   // --- Delete video ----------------------------------------------------
   function bindDeleteVideo() {
     document.querySelectorAll('[data-action="delete-video"]').forEach(function (btn) {
@@ -243,6 +348,7 @@
   // --- Export ----------------------------------------------------------
   window.Admin = {
     bindUpload: bindUpload,
+    bindImport: bindImport,
     bindDeleteVideo: bindDeleteVideo,
     bindJobForm: bindJobForm,
     bindSamplingModeToggle: bindSamplingModeToggle,

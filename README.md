@@ -40,7 +40,24 @@ docker compose down -v         # 메타 DB + 업로드/추출 파일 모두 삭�
 1. **업로드** — `http://localhost:9110/`의 업로드 폼에서 영상 선택. OpenCV가 자동으로 duration / fps / 해상도 추출.
 2. **추출 작업 생성** — 영상 상세 페이지(`/videos/<id>`)에서 옵션 입력 후 [추출 시작]. 잡이 큐에 들어가고 워커가 즉시 처리.
 3. **진행 모니터링** — 잡 상세 페이지(`/jobs/<id>`)에서 2초 간격 폴링으로 진행률 표시. 취소 버튼으로 중단 가능 (이미 추출된 프레임은 유지).
-4. **결과 확인** — 잡 상세에 갤러리 형태로 PNG 썸네일 표시. 개별 프레임 삭제 또는 원본 PNG 다운로드 가능.
+4. **결과 확인** — 잡 상세에 갤러리 형태로 PNG 썸네일 표시. 개별 프레임 삭제, 단일 PNG 다운로드, 전체 ZIP 다운로드 가능.
+
+---
+
+## 사내망 모드 vs. 보편 모드
+
+사내망 보안 정책으로 브라우저 업로드/다운로드가 막히는 환경과 표준 환경
+모두에서 동일한 솔루션을 쓸 수 있도록 두 흐름이 공존한다.
+
+| 작업 | 보편 모드 (표준 브라우저) | 사내망 모드 (업/다운 제한) |
+|---|---|---|
+| 영상 입력 | 인덱스 페이지의 multipart 업로드 (파일/폴더 픽커) | `FX_IMPORT_DIR` 활성화 후 SCP/SMB로 떨군 파일을 [스캔] → [가져오기] |
+| 결과 다운로드 | 잡 상세에서 [전체 다운로드 (ZIP)] 또는 썸네일의 [↓] | 정적 마운트 `/frames/<job_id>/` 의 개별 PNG를 새 탭에서 열어 우클릭 저장 |
+| 원본 다운로드 | [원본 다운로드] (attachment) | [새 탭에서 열기] 후 우클릭 저장 |
+
+서버 경로 import는 `FX_IMPORT_DIR`이 설정된 경우에만 활성화된다 (UI 패널과
+`/api/import` 엔드포인트 둘 다). 경로 traversal은 강제로 차단된다 — 클라이언트가
+지정하는 `names`는 모두 `FX_IMPORT_DIR` 안으로 resolve되어야 한다.
 
 ---
 
@@ -70,15 +87,20 @@ docker compose down -v         # 메타 DB + 업로드/추출 파일 모두 삭�
 | POST   | `/api/videos` | multipart 업로드 (`file=<binary>`) |
 | GET    | `/api/videos` | 전체 영상 메타 목록 |
 | GET    | `/api/videos/{id}` | 단건 |
+| GET    | `/api/videos/{id}/download` | 원본 강제 다운로드 (Content-Disposition: attachment) |
 | DELETE | `/api/videos/{id}` | 영상 + 잡 + 프레임 + 파일 cascade 삭제 |
+| GET    | `/api/import` | (`FX_IMPORT_DIR` 설정 시) 서버 경로 안의 영상 후보 스캔 |
+| POST   | `/api/import` | (동상) 선택한 파일들을 영상으로 등록 (`names=[]`이면 전체) |
 | POST   | `/api/videos/{id}/jobs` | 추출 잡 생성 (JSON body) |
 | GET    | `/api/jobs/{id}` | 잡 상태 폴링용 |
 | POST   | `/api/jobs/{id}/cancel` | 큐/실행 중 잡 취소 |
 | GET    | `/api/jobs/{id}/frames` | 프레임 메타 페이지네이션 |
+| GET    | `/api/jobs/{id}/download` | 잡의 모든 프레임을 ZIP으로 스트리밍 |
+| GET    | `/api/frames/{id}/download` | 단일 프레임 강제 다운로드 |
 | DELETE | `/api/frames/{id}` | 단일 프레임 + 파일 삭제 |
 | GET    | `/api/health` | DB ping |
-| GET    | `/media/*` | 업로드 원본 정적 서빙 |
-| GET    | `/frames/*` | 추출 PNG 정적 서빙 |
+| GET    | `/media/*` | 업로드 원본 정적 서빙 (인라인 — 새 탭 열기용) |
+| GET    | `/frames/*` | 추출 PNG 정적 서빙 (인라인 — 갤러리 썸네일용) |
 
 ---
 
@@ -134,6 +156,8 @@ Invoke-RestMethod -Method Post `
 | `FX_DB_HOST` / `FX_DB_PORT` | `fx-postgres` / 5432 | 메타 DB 위치 |
 | `FX_DB_NAME` / `FX_DB_USER` / `FX_DB_PASSWORD` | `frames_db` / `extractor_role` / `dev_extractor_pw` | DB 자격증명 (dev only) |
 | `FX_MEDIA_DIR` / `FX_FRAMES_DIR` | `/data/media` / `/data/frames` | 컨테이너 내부 마운트 경로 |
+| `FX_IMPORT_DIR` | (비활성) | 서버 경로 import 활성화. 설정 시 `/api/import` + UI 패널 노출 |
+| `FX_IMPORT_MOVE` | `false` | `true` = import 시 파일을 이동, `false` = 복사 (원본 보존) |
 | `FX_WORKERS` | 2 | 동시 처리 워커 수 |
 | `FX_DEFAULT_TARGET_FPS` | 5 | UI 폼 기본값 |
 | `FX_MAX_UPLOAD_MB` | 2048 | 업로드 크기 상한 |

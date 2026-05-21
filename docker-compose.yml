@@ -56,11 +56,20 @@ services:
       FX_MAX_UPLOAD_MB: "2048"
       FX_LOG_LEVEL: "INFO"
       FX_LOG_FORMAT: "json"
+      # Server-side import (opt-in): when set, /api/import becomes available
+      # and the index page shows a "서버 경로에서 가져오기" panel. Useful for
+      # locked-down networks where browser multipart upload is blocked but
+      # files can land on the host (SCP / SMB / bind mount).
+      # FX_IMPORT_DIR: "/data/import"
+      # FX_IMPORT_MOVE: "false"   # true = rename out of import_dir, false = copy
     ports:
       - "9110:9110"
     volumes:
       - ./media:/data/media
       - ./frames:/data/frames
+      # Uncomment alongside FX_IMPORT_DIR to expose a drop folder for SCP/etc.
+      # (drop ":ro" if FX_IMPORT_MOVE=true — move needs write access).
+      # - ./import:/data/import:ro
     depends_on:
       fx-postgres:
         condition: service_healthy
