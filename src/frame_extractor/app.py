@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import re
 import shutil
+import urllib.parse
 import uuid
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, AsyncIterator, Literal
 from uuid import UUID
 
 import asyncpg
@@ -22,7 +25,12 @@ from fastapi import (
     Request,
     UploadFile,
 )
-from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    FileResponse,
+    StreamingResponse,
+)
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
@@ -58,11 +66,9 @@ class JobCreate(BaseModel):
     seed: int | None = None
     format: Literal["png"] = "png"
 
-
 class BatchJobCreate(BaseModel):
     video_ids: list[UUID] = Field(min_length=1, max_length=10_000)
     params: JobCreate
-
 
 # ---------------------------------------------------------------------------
 # App factory
@@ -96,11 +102,118 @@ def build_app(
 
     media_root = Path(settings.media_dir).resolve()
     frames_root = Path(settings.frames_dir).resolve()
+    import_root: Path | None = (
+        Path(settings.import_dir).resolve() if settings.import_enabled else None
+    )
+    if import_root is not None:
+        # Be forgiving here: the directory may be a bind mount that comes up
+        # empty. We just create it if missing so the operator can drop files
+        # in later.
+        import_root.mkdir(parents=True, exist_ok=True)
 
     # ---- helpers ----------------------------------------------------------
 
     def _video_to_dict(row: dict[str, Any]) -> dict[str, Any]:
         return _jsonify_row(row)
+
+    def _resolve_inside(root: Path, raw: str) -> Path:
+        """Resolve ``raw`` (a relative path string from the client) against
+        ``root`` and confirm the result stays inside ``root``. Raises HTTP
+        400/403 on traversal or invalid input."""
+        rel = raw.strip().lstrip("/\\")
+        if not rel or rel in {".", ".."}:
+            raise HTTPException(400, "invalid path")
+        candidate = (root / rel).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            raise HTTPException(403, "path escapes import root")
+        return candidate
+
+    def _scan_import_root() -> list[dict[str, Any]]:
+        """Walk ``import_root`` and return rows describing each video file
+        found. Cheap (just stat + extension check); no DB lookup."""
+        assert import_root is not None
+        out: list[dict[str, Any]] = []
+        for p in sorted(import_root.rglob("*")):
+            if not p.is_file():
+                continue
+            ext = p.suffix.lower().lstrip(".")
+            if ext not in _ALLOWED_VIDEO_EXTS:
+                continue
+            try:
+                size = p.stat().st_size
+            except OSError:
+                continue
+            out.append({
+                "name": p.relative_to(import_root).as_posix(),
+                "size_bytes": size,
+                "ext": ext,
+            })
+        return out
+
+    async def _register_existing_file(source: Path) -> dict[str, Any]:
+        """Materialize a video that already exists on disk (under
+        import_root) into the media dir + a video row. Honors
+        ``settings.import_move`` for copy vs rename. Returns the inserted
+        row as a JSON dict."""
+        ext = source.suffix.lower().lstrip(".")
+        if ext not in _ALLOWED_VIDEO_EXTS:
+            raise HTTPException(415, f"unsupported extension: .{ext}")
+        if not source.is_file():
+            raise HTTPException(404, f"not a file: {source.name}")
+
+        safe_name = _SAFE_FILENAME.sub("_", source.name)
+        if not safe_name:
+            raise HTTPException(400, "empty filename")
+
+        video_id = uuid.uuid4()
+        dest = media_root / f"{video_id}.{ext}"
+
+        def _materialize() -> int:
+            if settings.import_move:
+                # Rename inside the same volume is atomic; cross-volume falls
+                # back to copy+unlink via shutil.move.
+                shutil.move(str(source), str(dest))
+            else:
+                shutil.copy2(str(source), str(dest))
+            return dest.stat().st_size
+
+        try:
+            size_written = await asyncio.to_thread(_materialize)
+        except OSError as exc:
+            raise HTTPException(500, f"import failed: {exc}")
+
+        try:
+            meta = await asyncio.to_thread(probe, dest)
+            duration = meta.duration_sec
+            fps = meta.src_fps
+            width = meta.width
+            height = meta.height
+        except Exception as exc:
+            log.warning("video_probe_failed", file=str(dest), err=str(exc))
+            duration = fps = None
+            width = height = None
+
+        row = await video_repo.insert(
+            video_id=video_id,
+            filename=safe_name,
+            file_path=str(dest),
+            container_ext=ext,
+            duration_sec=duration,
+            src_fps=fps,
+            width=width,
+            height=height,
+            size_bytes=size_written,
+        )
+        return _jsonify_row(row)
+
+    def _attachment_disposition(filename: str) -> str:
+        """Build a RFC 5987-compliant Content-Disposition value so non-ASCII
+        filenames survive intact."""
+        ascii_fallback = filename.encode("ascii", "ignore").decode() or "file"
+        quoted = urllib.parse.quote(filename, safe="")
+        return f"attachment; filename=\"{ascii_fallback}\"; filename*=UTF-8''{quoted}"
 
     # ---- HTML pages -------------------------------------------------------
 
@@ -113,7 +226,12 @@ def build_app(
                 "videos": [_video_to_dict(r) for r in rows],
                 "max_upload_mb": settings.max_upload_mb,
                 "default_target_fps": settings.default_target_fps,
+<<<<<<< HEAD
                 "media_dir": settings.media_dir,
+=======
+                "import_enabled": settings.import_enabled,
+                "import_dir": settings.import_dir,
+>>>>>>> d2496dce02bb9cb2a5fba4bd6c8d023966e14368
             },
         )
 
@@ -262,6 +380,69 @@ def build_app(
             "skipped": skipped,
         }
 
+    # ---- API: server-side import (opt-in via FX_IMPORT_DIR) ---------------
+
+    @app.get("/api/import")
+    async def list_import_candidates() -> dict[str, Any]:
+        """List video files under FX_IMPORT_DIR. The browser-upload flow
+        is the default; this is for environments where multipart upload
+        through the browser is blocked but files can land on the server
+        via SCP / SFTP / bind mount."""
+        if import_root is None:
+            raise HTTPException(404, "import disabled (set FX_IMPORT_DIR)")
+        return {
+            "root": str(import_root),
+            "files": await asyncio.to_thread(_scan_import_root),
+        }
+
+    @app.post("/api/import")
+    async def import_from_path(body: ImportRequest) -> dict[str, Any]:
+        """Register files from FX_IMPORT_DIR as videos.
+
+        - ``names == []`` → import everything the scan finds.
+        - ``names == [...]`` → import just those relative paths.
+
+        Each entry is resolved against the import root and rejected if it
+        escapes (path traversal). Result shape mirrors the multipart
+        upload endpoint."""
+        if import_root is None:
+            raise HTTPException(404, "import disabled (set FX_IMPORT_DIR)")
+
+        if body.names:
+            candidates = [_resolve_inside(import_root, n) for n in body.names]
+        else:
+            scan = await asyncio.to_thread(_scan_import_root)
+            candidates = [import_root / e["name"] for e in scan]
+
+        if not candidates:
+            return {"uploaded": [], "failed": [], "skipped": []}
+
+        uploaded: list[dict[str, Any]] = []
+        failed: list[dict[str, str]] = []
+        skipped: list[str] = []
+
+        for source in candidates:
+            label = source.relative_to(import_root).as_posix()
+            ext = source.suffix.lower().lstrip(".")
+            if ext not in _ALLOWED_VIDEO_EXTS:
+                skipped.append(label)
+                continue
+            try:
+                row = await _register_existing_file(source)
+                uploaded.append(row)
+            except HTTPException as exc:
+                failed.append({"filename": label, "error": str(exc.detail)})
+            except Exception as exc:
+                log.exception("import_failed", file=label)
+                failed.append({"filename": label, "error": str(exc)})
+
+        return {
+            "uploaded": uploaded,
+            "failed": failed,
+            "skipped": skipped,
+            "moved": settings.import_move,
+        }
+
     @app.get("/api/videos")
     async def list_videos() -> list[dict[str, Any]]:
         rows = await video_repo.list_all()
@@ -368,6 +549,28 @@ def build_app(
         if row is None:
             raise HTTPException(404, "video not found")
         return _jsonify_row(row)
+
+    @app.get("/api/videos/{video_id}/download")
+    async def download_video(video_id: UUID) -> FileResponse:
+        """Force-download the original upload. The /media/* static mount
+        serves it inline (browser preview); this endpoint adds
+        Content-Disposition: attachment so the browser saves it."""
+        row = await video_repo.get(video_id)
+        if row is None:
+            raise HTTPException(404, "video not found")
+        p = Path(row["file_path"]).resolve()
+        try:
+            p.relative_to(media_root)
+        except ValueError:
+            raise HTTPException(403, "file_path escapes media_root")
+        if not p.is_file():
+            raise HTTPException(404, "underlying file missing")
+        filename = row.get("filename") or p.name
+        return FileResponse(
+            path=str(p),
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": _attachment_disposition(filename)},
+        )
 
     @app.delete("/api/videos/{video_id}")
     async def delete_video(video_id: UUID) -> dict[str, bool]:
@@ -490,6 +693,78 @@ def build_app(
             await job_repo.mark_cancelled(job_id)
         return {"ok": True, "signalled": signalled}
 
+    @app.get("/api/jobs/{job_id}/download")
+    async def download_job_frames(job_id: UUID) -> StreamingResponse:
+        """Stream all frames of a job as a single uncompressed ZIP.
+
+        Uses ``zipfile.ZIP_STORED`` because PNG is already compressed —
+        deflate just wastes CPU. Streams in 1 MiB chunks so memory stays
+        flat regardless of job size."""
+        job = await job_repo.get(job_id)
+        if job is None:
+            raise HTTPException(404, "job not found")
+
+        # We page through frames in batches so the DB call doesn't have to
+        # buffer huge result sets in memory.
+        total = await frame_repo.count_for_job(job_id)
+        if total == 0:
+            raise HTTPException(404, "no frames in this job")
+
+        archive_name = f"job-{str(job_id)[:8]}.zip"
+
+        async def _frame_pages() -> AsyncIterator[dict[str, Any]]:
+            page_size = 200
+            offset = 0
+            while True:
+                rows = await frame_repo.list_for_job(
+                    job_id, limit=page_size, offset=offset,
+                )
+                if not rows:
+                    break
+                for r in rows:
+                    yield r
+                if len(rows) < page_size:
+                    break
+                offset += page_size
+
+        async def _iter_zip() -> AsyncIterator[bytes]:
+            buffer = io.BytesIO()
+            with zipfile.ZipFile(
+                buffer, mode="w", compression=zipfile.ZIP_STORED,
+            ) as zf:
+                async for row in _frame_pages():
+                    fp = Path(row["file_path"]).resolve()
+                    try:
+                        fp.relative_to(frames_root)
+                    except ValueError:
+                        # Skip rows pointing outside the frames root rather
+                        # than abort the whole archive.
+                        log.warning(
+                            "frame_outside_root_in_zip",
+                            job_id=str(job_id), path=str(fp),
+                        )
+                        continue
+                    if not fp.is_file():
+                        continue
+                    arcname = fp.name
+                    zf.write(str(fp), arcname=arcname)
+                    chunk = buffer.getvalue()
+                    if chunk:
+                        yield chunk
+                        buffer.seek(0)
+                        buffer.truncate(0)
+            tail = buffer.getvalue()
+            if tail:
+                yield tail
+
+        return StreamingResponse(
+            _iter_zip(),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": _attachment_disposition(archive_name),
+            },
+        )
+
     @app.get("/api/jobs/{job_id}/frames")
     async def list_frames(
         job_id: UUID,
@@ -510,6 +785,34 @@ def build_app(
         }
 
     # ---- API: frames ------------------------------------------------------
+
+    @app.get("/api/frames/{frame_id}/download")
+    async def download_frame(frame_id: UUID) -> FileResponse:
+        """Force-download a single frame PNG.
+
+        The /frames/* static mount displays the PNG inline; this endpoint
+        adds Content-Disposition: attachment so a browser save dialog
+        opens instead. Useful when corporate browser policy rewrites
+        right-click → save URLs."""
+        row = await frame_repo.get(frame_id)
+        if row is None:
+            raise HTTPException(404, "frame not found")
+        p = Path(row["file_path"]).resolve()
+        try:
+            p.relative_to(frames_root)
+        except ValueError:
+            raise HTTPException(403, "file_path escapes frames_root")
+        if not p.is_file():
+            raise HTTPException(404, "underlying file missing")
+        # Name the download by job + frame index so multiple downloads from
+        # different jobs don't clobber each other in the user's downloads
+        # folder.
+        filename = f"job-{str(row['job_id'])[:8]}_frame-{p.name}"
+        return FileResponse(
+            path=str(p),
+            media_type="image/png",
+            headers={"Content-Disposition": _attachment_disposition(filename)},
+        )
 
     @app.delete("/api/frames/{frame_id}")
     async def delete_frame(frame_id: UUID) -> dict[str, bool]:

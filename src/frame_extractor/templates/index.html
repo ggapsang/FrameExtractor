@@ -2,18 +2,60 @@
 {% block content %}
 
 <fieldset>
-  <legend>media 폴더 스캔</legend>
-  <p class="muted small" style="margin:0 0 8px 0">
-    호스트의 <code>c:\project\FrameExtractor\media\</code>
-    (컨테이너 안 <code>{{ media_dir }}</code>) 에 영상 파일을 복사한 후
-    <b>[폴더 재스캔]</b>을 누르세요. 새 파일이 자동으로 메타 추출 후 아래
-    리스트에 등록됩니다. 이미 등록된 파일은 건너뜁니다.
+  <legend>영상 업로드 (브라우저)</legend>
+  <form id="upload-form" enctype="multipart/form-data">
+    <div class="upload-mode">
+      <label>
+        <input type="radio" name="upload-mode" value="files" checked>
+        파일 선택 <span class="muted">(Ctrl/Shift로 여러 개)</span>
+      </label>
+      &nbsp;&nbsp;
+      <label>
+        <input type="radio" name="upload-mode" value="folder">
+        폴더 선택 <span class="muted">(영상 파일만 자동 필터)</span>
+      </label>
+    </div>
+    <div class="upload-inputs">
+      <input type="file" id="upload-input-files" multiple
+             accept="video/*,.mp4,.mov,.avi,.mkv,.webm,.m4v">
+      <input type="file" id="upload-input-folder" multiple
+             webkitdirectory directory mozdirectory style="display:none">
+    </div>
+    <p>
+      <button type="submit" class="btn btn-primary">업로드</button>
+      <span class="muted mono" id="upload-status">(최대 {{ max_upload_mb }} MB / 파일)</span>
+    </p>
+  </form>
+</fieldset>
+
+{% if import_enabled %}
+<fieldset>
+  <legend>서버 경로에서 가져오기</legend>
+  <p class="muted small">
+    브라우저 업로드가 막힌 환경용. SCP/네트워크 드라이브로
+    <span class="mono">{{ import_dir }}</span> 에 떨궈둔 영상을 한 번에 등록.
   </p>
   <p>
-    <button type="button" class="btn btn-primary" id="btn-rescan">폴더 재스캔</button>
-    <span class="muted mono" id="rescan-status"></span>
+    <button type="button" class="btn" id="import-scan-btn">스캔</button>
+    <button type="button" class="btn btn-primary" id="import-all-btn" disabled>전체 가져오기</button>
+    <button type="button" class="btn" id="import-selected-btn" disabled>선택 가져오기</button>
+    <span class="muted mono" id="import-status"></span>
   </p>
+  <div id="import-results" style="display:none">
+    <table class="grid" id="import-table">
+      <thead>
+        <tr>
+          <th style="width:24px"><input type="checkbox" id="import-check-all"></th>
+          <th>경로 (상대)</th>
+          <th>확장자</th>
+          <th>크기</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
 </fieldset>
+{% endif %}
 
 <fieldset>
   <legend>영상 ({{ videos|length }}) — 체크박스로 다중 선택 → 일괄 추출</legend>
@@ -183,8 +225,16 @@
   Admin.bindRescan();
   Admin.bindRefreshList();
   Admin.bindDeleteVideo();
-  Admin.bindCheckboxSelection();
-  Admin.bindBatchExtract();
-  Admin.bindUpload(document.getElementById('upload-form'), document.getElementById('upload-status'));
+  {% if import_enabled %}
+  Admin.bindImport({
+    scanBtn:     document.getElementById('import-scan-btn'),
+    allBtn:      document.getElementById('import-all-btn'),
+    selectedBtn: document.getElementById('import-selected-btn'),
+    statusEl:    document.getElementById('import-status'),
+    container:   document.getElementById('import-results'),
+    table:       document.getElementById('import-table'),
+    checkAll:    document.getElementById('import-check-all'),
+  });
+  {% endif %}
 </script>
 {% endblock %}

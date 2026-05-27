@@ -35,6 +35,15 @@
 <fieldset>
   <legend>추출된 프레임 (총 {{ total_frames }})</legend>
   {% if frames %}
+  <p>
+    <a class="btn btn-primary" href="/api/jobs/{{ job.id }}/download" download>
+      전체 다운로드 (ZIP)
+    </a>
+    <span class="muted small">
+      {{ total_frames }}장. 사내망에서 브라우저가 ZIP을 막으면 정적 링크
+      <span class="mono">/frames/{{ job.id }}/</span> 의 개별 PNG로 받으세요.
+    </span>
+  </p>
   <div class="gallery">
     {% for f in frames %}
       {% set rel = f.file_path.split('/data/frames/')[1] if '/data/frames/' in f.file_path else f.file_path %}
@@ -44,7 +53,10 @@
         </a>
         <figcaption class="mono">
           #{{ f.frame_index }} · {{ '%.2f'|format(f.time_sec) }}s
-          <button class="btn btn-danger" data-action="delete-frame" data-id="{{ f.id }}">×</button>
+          <span class="thumb-actions">
+            <a class="btn" href="/api/frames/{{ f.id }}/download" download title="다운로드">↓</a>
+            <button class="btn btn-danger" data-action="delete-frame" data-id="{{ f.id }}">×</button>
+          </span>
         </figcaption>
       </figure>
     {% endfor %}
