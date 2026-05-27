@@ -4,7 +4,7 @@
 
 - **기본 입력**: mp4 (그 외 mov, avi, mkv, webm, m4v도 OpenCV가 받는 한 동작)
 - **추출 옵션**: 초당 N프레임, X초마다 1장, 랜덤 N장, head/tail 자르기, resize
-- **출력**: PNG (`/data/frames/<job_id>/<seq>.png`)
+- **출력**: PNG (`/data/frames/<영상이름>/<영상이름>_NNNNN.png`)
 - **메타 저장**: 자체 PostgreSQL 컨테이너 (`fx-postgres`)
 - **실행 모델**: 백그라운드 asyncio 워커 풀 (기본 2개), 진행률 폴링 + 취소 지원
 - **네트워크**: 완전 독립 (`fx-net`). 다른 레포(SocketDaim 등)와 무관.

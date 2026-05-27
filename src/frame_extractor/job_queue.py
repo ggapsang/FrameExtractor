@@ -114,11 +114,16 @@ class JobQueue:
             await self._job_repo.mark_failed(job_id, f"invalid params: {exc}")
             return
 
-        out_dir = Path(self._settings.frames_dir) / str(job_id)
+        # Per-video folder, NOT per-job. All extractions of the same video
+        # share <frames_dir>/<video_stem>/ — the worker clears stale PNGs
+        # on each run so only the most recent extraction's output remains.
+        video_stem = Path(video["filename"]).stem or "frame"
+        out_dir = Path(self._settings.frames_dir) / video_stem
         ctx = JobContext(
             job_id=job_id,
             video_id=row["video_id"],
             video_path=Path(video["file_path"]),
+            video_filename=video["filename"],
             out_dir=out_dir,
             params=params,
             cancel_event=cancel_event,

@@ -74,15 +74,32 @@ def plan_indices(
     src_fps: float,
     frame_count: int,
 ) -> list[tuple[int, float]]:
-    """Return a sorted list of (frame_index, time_sec) to extract."""
+    """Return a sorted list of (frame_index, time_sec) to extract.
+
+    Head/tail fallback:
+      * If the source video is shorter than 1 second, OR
+      * If head_skip_sec + tail_skip_sec would leave zero/negative window,
+    head/tail trimming is silently ignored and the whole clip is used.
+    Other params (fps, interval, random_n, resize) still apply.
+    """
     params.validate()
+
+    # Fallback: head/tail are dropped when they make no sense for this clip.
+    effective_head = params.head_skip_sec
+    effective_tail = params.tail_skip_sec
+    if (
+        duration_sec < 1.0
+        or (effective_head + effective_tail) >= duration_sec
+    ):
+        effective_head = 0.0
+        effective_tail = 0.0
 
     start_idx, end_idx = _window_indices(
         duration_sec=duration_sec,
         src_fps=src_fps,
         frame_count=frame_count,
-        head_skip_sec=params.head_skip_sec,
-        tail_skip_sec=params.tail_skip_sec,
+        head_skip_sec=effective_head,
+        tail_skip_sec=effective_tail,
     )
     if end_idx <= start_idx:
         return []

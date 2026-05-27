@@ -2,51 +2,47 @@
 {% block content %}
 
 <fieldset>
-  <legend>영상 업로드</legend>
-  <form id="upload-form" enctype="multipart/form-data">
-    <div class="upload-mode">
-      <label>
-        <input type="radio" name="upload-mode" value="files" checked>
-        파일 선택 <span class="muted">(Ctrl/Shift로 여러 개)</span>
-      </label>
-      &nbsp;&nbsp;
-      <label>
-        <input type="radio" name="upload-mode" value="folder">
-        폴더 선택 <span class="muted">(영상 파일만 자동 필터)</span>
-      </label>
-    </div>
-    <div class="upload-inputs">
-      <input type="file" id="upload-input-files" multiple
-             accept="video/*,.mp4,.mov,.avi,.mkv,.webm,.m4v">
-      <input type="file" id="upload-input-folder" multiple
-             webkitdirectory directory mozdirectory style="display:none">
-    </div>
-    <p>
-      <button type="submit" class="btn btn-primary">업로드</button>
-      <span class="muted mono" id="upload-status">(최대 {{ max_upload_mb }} MB / 파일)</span>
-    </p>
-  </form>
+  <legend>media 폴더 스캔</legend>
+  <p class="muted small" style="margin:0 0 8px 0">
+    호스트의 <code>c:\project\FrameExtractor\media\</code>
+    (컨테이너 안 <code>{{ media_dir }}</code>) 에 영상 파일을 복사한 후
+    <b>[폴더 재스캔]</b>을 누르세요. 새 파일이 자동으로 메타 추출 후 아래
+    리스트에 등록됩니다. 이미 등록된 파일은 건너뜁니다.
+  </p>
+  <p>
+    <button type="button" class="btn btn-primary" id="btn-rescan">폴더 재스캔</button>
+    <span class="muted mono" id="rescan-status"></span>
+  </p>
 </fieldset>
 
 <fieldset>
-  <legend>업로드된 영상 ({{ videos|length }})</legend>
+  <legend>영상 ({{ videos|length }}) — 체크박스로 다중 선택 → 일괄 추출</legend>
+  <p style="margin:0 0 6px 0">
+    <button type="button" class="btn" id="btn-refresh-list">목록 새로고침</button>
+    <span class="muted small">
+      다른 곳에서 추출 잡이 돌고 있거나 폴더 상태가 바뀌었을 때 페이지를 갱신합니다.
+      (호스트 폴더에서 새 파일을 발견하려면 위의 <b>[폴더 재스캔]</b>을 누르세요.)
+    </span>
+  </p>
   {% if videos %}
-  <table class="grid">
+  <table class="grid" id="video-table">
     <thead>
       <tr>
+        <th><input type="checkbox" id="check-all" title="전체 선택"></th>
         <th>파일명</th>
         <th>확장자</th>
         <th>해상도</th>
         <th>fps</th>
         <th>duration</th>
         <th>크기</th>
-        <th>업로드</th>
-        <th></th>
+        <th>등록</th>
+        <th>작업</th>
       </tr>
     </thead>
     <tbody>
       {% for v in videos %}
       <tr>
+        <td><input type="checkbox" class="video-check" data-id="{{ v.id }}"></td>
         <td><a href="/videos/{{ v.id }}">{{ v.filename }}</a></td>
         <td class="mono">{{ v.container_ext }}</td>
         <td class="mono">{% if v.width %}{{ v.width }}×{{ v.height }}{% else %}-{% endif %}</td>
@@ -55,6 +51,7 @@
         <td class="mono">{% if v.size_bytes %}{{ (v.size_bytes / 1024 / 1024) | round(1) }} MB{% else %}-{% endif %}</td>
         <td class="mono">{{ v.uploaded_at[:19] if v.uploaded_at else '' }}</td>
         <td>
+          <a class="btn" href="/videos/{{ v.id }}">상세/단건추출</a>
           <button class="btn btn-danger" data-action="delete-video" data-id="{{ v.id }}">삭제</button>
         </td>
       </tr>
@@ -62,15 +59,132 @@
     </tbody>
   </table>
   {% else %}
-  <p class="muted">아직 업로드된 영상이 없습니다.</p>
+  <p class="muted">
+    아직 등록된 영상이 없습니다. 위 <code>media/</code> 폴더에 영상을 떨어뜨리고
+    <b>[폴더 재스캔]</b>을 누르세요.
+  </p>
   {% endif %}
 </fieldset>
+
+<fieldset id="batch-extract-fieldset" style="display:none">
+  <legend>일괄 추출 옵션 <span id="batch-count" class="muted">(선택 0개)</span></legend>
+  <form id="batch-form">
+    <table class="form-grid">
+      <tr>
+        <th><label for="b_sampling_mode">샘플링 모드</label></th>
+        <td>
+          <select name="sampling_mode" id="b_sampling_mode">
+            <option value="uniform" selected>uniform (균일 추출)</option>
+            <option value="random_n">random_n (랜덤 N장)</option>
+          </select>
+        </td>
+      </tr>
+
+      <tr class="b-row-uniform">
+        <th><label for="b_target_fps">target_fps</label></th>
+        <td>
+          <input type="number" step="0.1" name="target_fps" id="b_target_fps"
+                 value="{{ default_target_fps }}" min="0.1" max="240">
+          <span class="muted">초당 추출할 프레임 수 (다운샘플링만)</span>
+        </td>
+      </tr>
+      <tr class="b-row-uniform">
+        <th><label for="b_interval_sec">interval_sec</label></th>
+        <td>
+          <input type="number" step="0.01" name="interval_sec" id="b_interval_sec"
+                 placeholder="(미사용)" min="0.01">
+          <span class="muted">지정 시 매 X초마다 1장 (target_fps 무시)</span>
+        </td>
+      </tr>
+
+      <tr class="b-row-random" style="display:none">
+        <th><label for="b_random_n">random_n</label></th>
+        <td>
+          <input type="number" step="1" name="random_n" id="b_random_n"
+                 value="20" min="1" max="1000000">
+          <span class="muted">랜덤 추출할 총 장수 (영상마다 동일하게 적용)</span>
+        </td>
+      </tr>
+      <tr class="b-row-random" style="display:none">
+        <th><label for="b_seed">seed</label></th>
+        <td>
+          <input type="number" step="1" name="seed" id="b_seed" placeholder="(미지정)">
+          <span class="muted">재현 가능한 무작위. 비우면 매번 다름</span>
+        </td>
+      </tr>
+
+      <tr>
+        <th><label>head/tail 자르기</label></th>
+        <td>
+          head <input type="number" step="0.1" name="head_skip_sec" id="b_head_skip_sec"
+                      value="0" min="0" style="width:80px"> 초
+          &nbsp;&nbsp;
+          tail <input type="number" step="0.1" name="tail_skip_sec" id="b_tail_skip_sec"
+                      value="0" min="0" style="width:80px"> 초
+        </td>
+      </tr>
+
+      <tr>
+        <th><label>resize</label></th>
+        <td>
+          w <input type="number" step="1" name="resize_w" id="b_resize_w"
+                  placeholder="(원본)" min="1" max="16384" style="width:90px">
+          ×
+          h <input type="number" step="1" name="resize_h" id="b_resize_h"
+                  placeholder="(원본)" min="1" max="16384" style="width:90px">
+          <span class="muted">둘 다 비우면 원본 해상도</span>
+        </td>
+      </tr>
+    </table>
+
+    <p>
+      <button type="submit" class="btn btn-primary" id="btn-batch-submit">
+        선택한 영상 추출 시작
+      </button>
+      <span class="muted mono" id="batch-status"></span>
+    </p>
+  </form>
+</fieldset>
+
+<details>
+  <summary class="muted small">브라우저에서 직접 업로드 (보조 — 사내 정책으로 차단될 수 있음)</summary>
+  <fieldset>
+    <legend>영상 업로드 (보조)</legend>
+    <form id="upload-form" enctype="multipart/form-data">
+      <div class="upload-mode">
+        <label>
+          <input type="radio" name="upload-mode" value="files" checked>
+          파일 선택 <span class="muted">(Ctrl/Shift로 여러 개)</span>
+        </label>
+        &nbsp;&nbsp;
+        <label>
+          <input type="radio" name="upload-mode" value="folder">
+          폴더 선택 <span class="muted">(영상 파일만 자동 필터)</span>
+        </label>
+      </div>
+      <div class="upload-inputs">
+        <input type="file" id="upload-input-files" multiple
+               accept="video/*,.mp4,.mov,.avi,.mkv,.webm,.m4v">
+        <input type="file" id="upload-input-folder" multiple
+               webkitdirectory directory mozdirectory style="display:none">
+      </div>
+      <p>
+        <button type="submit" class="btn">업로드</button>
+        <span class="muted mono" id="upload-status">(최대 {{ max_upload_mb }} MB / 파일)</span>
+      </p>
+    </form>
+  </fieldset>
+</details>
 
 {% endblock %}
 
 {% block scripts %}
 <script>
-  Admin.bindUpload(document.getElementById('upload-form'), document.getElementById('upload-status'));
+  Admin.bindRescan();
+  Admin.bindRefreshList();
   Admin.bindDeleteVideo();
+  Admin.bindCheckboxSelection();
+  Admin.bindBatchExtract();
+  Admin.bindUpload(document.getElementById('upload-form'), document.getElementById('upload-status'));
 </script>
 {% endblock %}

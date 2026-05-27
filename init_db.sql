@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS frame (
     video_id     UUID         NOT NULL REFERENCES video(id) ON DELETE CASCADE,
     frame_index  INTEGER      NOT NULL,
     time_sec     DOUBLE PRECISION NOT NULL,
-    file_path    TEXT         NOT NULL,              -- /data/frames/<job_id>/<seq>.png
+    file_path    TEXT         NOT NULL,              -- /data/frames/<video_stem>/<video_stem>_NNNNN.png
     width        INTEGER      NOT NULL,
     height       INTEGER      NOT NULL,
     created_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW()

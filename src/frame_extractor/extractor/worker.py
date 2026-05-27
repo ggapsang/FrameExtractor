@@ -29,6 +29,7 @@ class JobContext:
     job_id: UUID
     video_id: UUID
     video_path: Path
+    video_filename: str            # original uploaded filename (used as PNG name prefix)
     out_dir: Path
     params: ExtractionParams
     cancel_event: asyncio.Event
@@ -68,6 +69,28 @@ async def run_job(
 
         ctx.out_dir.mkdir(parents=True, exist_ok=True)
 
+        # Use the uploaded filename's stem as the PNG prefix
+        # (e.g. "clip_a.mp4" -> "clip_a"). Fall back to "frame" if the stem
+        # ends up empty for any reason.
+        video_stem = Path(ctx.video_filename).stem or "frame"
+
+        # ctx.out_dir is shared across all extractions of the same video
+        # (named after the video stem, not the job id). Clear stale PNGs
+        # from any previous extraction so the folder reflects this job's
+        # output exactly. PNG names follow <video_stem>_NNNNN.png so we
+        # only match that pattern to avoid touching unrelated files the
+        # user might have dropped in.
+        for old in ctx.out_dir.glob(f"{video_stem}_*.png"):
+            try:
+                old.unlink()
+            except OSError:
+                pass
+        # Drop frame rows from previous jobs of the same video. The job
+        # rows stay (history is preserved) but their frames_done counter
+        # will no longer match a frame table — that's expected, the folder
+        # holds only the most recent run's output.
+        await frame_repo.delete_for_video(ctx.video_id)
+
         # Hand the actual decode/write loop off to a thread, but we need to
         # poll cancel state and write DB rows from the loop. Use a queue:
         # the worker thread produces (idx, time_sec, file_path, w, h) tuples,
@@ -83,6 +106,7 @@ async def run_job(
             try:
                 for seq, idx, t_sec, file_path, w, h in _decode_and_write(
                     video_path=ctx.video_path,
+                    video_stem=video_stem,
                     out_dir=ctx.out_dir,
                     plan=plan,
                     resize_w=ctx.params.resize_w,
@@ -160,6 +184,7 @@ def _plan(
 def _decode_and_write(
     *,
     video_path: Path,
+    video_stem: str,
     out_dir: Path,
     plan: list[tuple[int, float]],
     resize_w: int | None,
@@ -171,6 +196,12 @@ def _decode_and_write(
     Runs in a worker thread. Seeks to each planned frame index. On seek
     failure the frame is skipped (some containers don't honor seek for
     non-keyframes).
+
+    PNG naming: ``<video_stem>_NNNNN.png`` (1-based). cv2.imwrite overwrites
+    any existing file at the same path, satisfying the "duplicate name in
+    the same folder = overwrite" rule on the client side too (the same names
+    are reused if the user downloads multiple extractions of the same video
+    into one folder).
     """
     cap = open_capture(video_path)
     try:
@@ -187,7 +218,7 @@ def _decode_and_write(
                     frame, (resize_w, resize_h), interpolation=cv2.INTER_AREA,
                 )
             h, w = frame.shape[:2]
-            filename = f"{seq:06d}.png"
+            filename = f"{video_stem}_{seq + 1:05d}.png"
             file_path = out_dir / filename
             ok_w = cv2.imwrite(
                 str(file_path), frame,
@@ -201,8 +232,20 @@ def _decode_and_write(
         cap.release()
 
 
-def remove_job_output_dir(frames_root: Path, job_id: UUID) -> None:
-    """Delete the on-disk output directory for a job (idempotent)."""
+def remove_video_output_dir(frames_root: Path, video_filename: str) -> None:
+    """Delete the per-video output directory <frames_root>/<video_stem>/.
+
+    Idempotent. Used when a video is deleted — its single folder holds
+    all extracted PNGs."""
+    stem = Path(video_filename).stem or "frame"
+    target = frames_root / stem
+    if target.exists():
+        shutil.rmtree(target, ignore_errors=True)
+
+
+def remove_legacy_job_output_dir(frames_root: Path, job_id: UUID) -> None:
+    """Delete a legacy <frames_root>/<job_id>/ directory from before the
+    rename to per-video folders. Idempotent — does nothing if absent."""
     target = frames_root / str(job_id)
     if target.exists():
         shutil.rmtree(target, ignore_errors=True)

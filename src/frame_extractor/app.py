@@ -30,7 +30,7 @@ from pydantic import BaseModel, Field
 from .config import Settings
 from .extractor.opencv_backend import probe
 from .extractor.sampling import ExtractionParams
-from .extractor.worker import remove_job_output_dir
+from .extractor.worker import remove_legacy_job_output_dir, remove_video_output_dir
 from .job_queue import JobQueue
 from .repository import FrameRepository, JobRepository, VideoRepository
 
@@ -57,6 +57,11 @@ class JobCreate(BaseModel):
     random_n: int | None = Field(default=None, gt=0, le=1_000_000)
     seed: int | None = None
     format: Literal["png"] = "png"
+
+
+class BatchJobCreate(BaseModel):
+    video_ids: list[UUID] = Field(min_length=1, max_length=10_000)
+    params: JobCreate
 
 
 # ---------------------------------------------------------------------------
@@ -108,6 +113,7 @@ def build_app(
                 "videos": [_video_to_dict(r) for r in rows],
                 "max_upload_mb": settings.max_upload_mb,
                 "default_target_fps": settings.default_target_fps,
+                "media_dir": settings.media_dir,
             },
         )
 
@@ -261,6 +267,101 @@ def build_app(
         rows = await video_repo.list_all()
         return [_jsonify_row(r) for r in rows]
 
+    @app.post("/api/videos/rescan")
+    async def rescan_media() -> dict[str, Any]:
+        """Two-way sync between FX_MEDIA_DIR and the video table.
+
+        Top-level only (no recursion).
+          * disk has, DB doesn't  → probe + INSERT
+          * disk has, DB has      → skip (skipped_registered)
+          * non-video on disk     → silent skip (skipped_non_video)
+          * DB has, disk doesn't  → DELETE row (cascades to jobs/frames)
+                                    and drop the per-video frames folder
+        """
+        existing_rows = await video_repo.list_all()
+        # filter to rows whose file_path is rooted under THIS media_root.
+        # uploads + rescans both land under media_root, so this is the
+        # universe we own. anything outside (manual edits / legacy) we
+        # leave alone.
+        existing_in_scope: dict[str, dict[str, Any]] = {}
+        for row in existing_rows:
+            try:
+                Path(row["file_path"]).resolve().relative_to(media_root)
+            except ValueError:
+                continue
+            existing_in_scope[row["file_path"]] = row
+
+        on_disk_paths: set[str] = set()
+        added: list[dict[str, Any]] = []
+        skipped_registered: list[str] = []
+        skipped_non_video: list[str] = []
+        removed: list[str] = []
+
+        # ---- pass 1: walk disk → add newcomers --------------------------
+        for p in sorted(media_root.iterdir()):
+            if not p.is_file():
+                continue
+            on_disk_paths.add(str(p))
+            ext = p.suffix.lower().lstrip(".")
+            if ext not in _ALLOWED_VIDEO_EXTS:
+                skipped_non_video.append(p.name)
+                continue
+            if str(p) in existing_in_scope:
+                skipped_registered.append(p.name)
+                continue
+            try:
+                meta = await asyncio.to_thread(probe, p)
+                duration = meta.duration_sec
+                fps = meta.src_fps
+                width = meta.width
+                height = meta.height
+            except Exception as exc:
+                log.warning("rescan_probe_failed", file=str(p), err=str(exc))
+                duration = fps = None
+                width = height = None
+            try:
+                size_bytes = p.stat().st_size
+            except OSError:
+                size_bytes = None
+            row = await video_repo.insert(
+                video_id=uuid.uuid4(),
+                filename=p.name,
+                file_path=str(p),
+                container_ext=ext,
+                duration_sec=duration,
+                src_fps=fps,
+                width=width,
+                height=height,
+                size_bytes=size_bytes,
+            )
+            added.append(_jsonify_row(row))
+
+        # ---- pass 2: sweep DB → drop orphans the user removed from disk -
+        for fp, row in existing_in_scope.items():
+            if fp in on_disk_paths:
+                continue
+            # cancel any in-flight job first (queue picks the cancel up;
+            # DB cascade then takes care of the row itself).
+            jobs = await job_repo.list_for_video(row["id"])
+            for j in jobs:
+                if j["status"] in ("queued", "running"):
+                    job_queue.request_cancel(j["id"])
+                # legacy <frames_root>/<job_id>/ dirs from before the
+                # per-video folder rename — be safe and clean those too.
+                remove_legacy_job_output_dir(frames_root, j["id"])
+            remove_video_output_dir(frames_root, row["filename"])
+            await video_repo.delete(row["id"])
+            removed.append(row["filename"])
+            log.info("rescan_removed_orphan", filename=row["filename"], video_id=str(row["id"]))
+
+        return {
+            "media_dir": settings.media_dir,
+            "added": added,
+            "skipped_registered": skipped_registered,
+            "skipped_non_video": skipped_non_video,
+            "removed": removed,
+        }
+
     @app.get("/api/videos/{video_id}")
     async def get_video(video_id: UUID) -> dict[str, Any]:
         row = await video_repo.get(video_id)
@@ -279,8 +380,12 @@ def build_app(
         for j in jobs:
             if j["status"] in ("queued", "running"):
                 job_queue.request_cancel(j["id"])
-            # Remove on-disk output dir regardless of status.
-            remove_job_output_dir(frames_root, j["id"])
+            # Backward cleanup: older runs may have written to
+            # <frames_root>/<job_id>/ before the per-video folder rename.
+            remove_legacy_job_output_dir(frames_root, j["id"])
+
+        # New layout: one folder per video, share across all its jobs.
+        remove_video_output_dir(frames_root, video["filename"])
 
         # DB cascade removes job + frame rows.
         await video_repo.delete(video_id)
@@ -322,6 +427,47 @@ def build_app(
         row = await job_repo.create(video_id=video_id, params=params)
         await job_queue.enqueue(row["id"])
         return _jsonify_row(row)
+
+    @app.post("/api/jobs/batch", status_code=201)
+    async def create_batch_jobs(body: BatchJobCreate) -> dict[str, Any]:
+        """Create one extraction job per video_id with identical params.
+
+        Validates the shared params once. Per-video errors (missing row,
+        DB failures) go into ``failed`` so a partial batch still creates
+        the good ones.
+        """
+        params_dict = body.params.model_dump(exclude_none=False)
+        try:
+            ExtractionParams(
+                target_fps=body.params.target_fps,
+                interval_sec=body.params.interval_sec,
+                resize_w=body.params.resize_w,
+                resize_h=body.params.resize_h,
+                head_skip_sec=body.params.head_skip_sec,
+                tail_skip_sec=body.params.tail_skip_sec,
+                sampling_mode=body.params.sampling_mode,
+                random_n=body.params.random_n,
+                format=body.params.format,
+                seed=body.params.seed,
+            ).validate()
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+
+        created: list[dict[str, Any]] = []
+        failed: list[dict[str, str]] = []
+        for vid in body.video_ids:
+            v = await video_repo.get(vid)
+            if v is None:
+                failed.append({"video_id": str(vid), "error": "video not found"})
+                continue
+            try:
+                row = await job_repo.create(video_id=vid, params=params_dict)
+                await job_queue.enqueue(row["id"])
+                created.append(_jsonify_row(row))
+            except Exception as exc:
+                log.exception("batch_job_create_failed", video_id=str(vid))
+                failed.append({"video_id": str(vid), "error": str(exc)})
+        return {"created": created, "failed": failed}
 
     @app.get("/api/jobs/{job_id}")
     async def get_job(job_id: UUID) -> dict[str, Any]:

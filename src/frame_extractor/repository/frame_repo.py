@@ -62,3 +62,17 @@ class FrameRepository:
     async def delete(self, frame_id: UUID) -> bool:
         result = await self._pool.execute("DELETE FROM frame WHERE id = $1", frame_id)
         return result.endswith(" 1")
+
+    async def delete_for_video(self, video_id: UUID) -> int:
+        """Delete every frame row for this video (across all jobs).
+
+        Called at the start of a new extraction to wipe stale rows that
+        pointed at the previous run's PNGs (the new PNGs reuse the same
+        filename pattern <video_stem>_NNNNN.png and overwrite on disk)."""
+        result = await self._pool.execute(
+            "DELETE FROM frame WHERE video_id = $1", video_id,
+        )
+        try:
+            return int(result.split()[-1])
+        except (ValueError, IndexError):
+            return 0

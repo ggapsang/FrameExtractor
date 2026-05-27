@@ -49,6 +49,12 @@ class VideoRepository:
         )
         return [dict(r) for r in rows]
 
+    async def list_file_paths(self) -> set[str]:
+        """Return the set of file_path values already registered.
+        Used by rescan to skip files that are already in the DB."""
+        rows = await self._pool.fetch("SELECT file_path FROM video")
+        return {r["file_path"] for r in rows}
+
     async def delete(self, video_id: UUID) -> bool:
         result = await self._pool.execute("DELETE FROM video WHERE id = $1", video_id)
         # asyncpg returns "DELETE n"
