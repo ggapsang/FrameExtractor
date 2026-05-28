@@ -70,6 +70,13 @@ class BatchJobCreate(BaseModel):
     video_ids: list[UUID] = Field(min_length=1, max_length=10_000)
     params: JobCreate
 
+
+class ImportRequest(BaseModel):
+    """Body for POST /api/import. Empty ``names`` means 'import every video
+    the scan finds'; otherwise each entry is a path relative to FX_IMPORT_DIR."""
+    names: list[str] = Field(default_factory=list, max_length=10_000)
+
+
 # ---------------------------------------------------------------------------
 # App factory
 # ---------------------------------------------------------------------------
@@ -226,12 +233,9 @@ def build_app(
                 "videos": [_video_to_dict(r) for r in rows],
                 "max_upload_mb": settings.max_upload_mb,
                 "default_target_fps": settings.default_target_fps,
-<<<<<<< HEAD
                 "media_dir": settings.media_dir,
-=======
                 "import_enabled": settings.import_enabled,
                 "import_dir": settings.import_dir,
->>>>>>> d2496dce02bb9cb2a5fba4bd6c8d023966e14368
             },
         )
 

@@ -2,7 +2,28 @@
 {% block content %}
 
 <fieldset>
+  <legend>media 폴더 스캔 (호스트 디스크에 떨궈둔 파일을 등록)</legend>
+  <p class="muted small" style="margin:0 0 8px 0">
+    호스트의 <code>c:\project\FrameExtractor\media\</code>
+    (컨테이너 안 <code>{{ media_dir }}</code>) 에 영상 파일을 복사한 후
+    <b>[폴더 재스캔]</b>을 누르세요. 새 파일이 자동으로 메타 추출 후 아래
+    리스트에 등록됩니다. 이미 등록된 파일은 건너뛰고, 폴더에서 사라진 영상은
+    DB와 추출 결과 폴더에서도 정리됩니다.
+  </p>
+  <p>
+    <button type="button" class="btn btn-primary" id="btn-rescan">폴더 재스캔</button>
+    <span class="muted mono" id="rescan-status"></span>
+  </p>
+</fieldset>
+
+<fieldset>
   <legend>영상 업로드 (브라우저)</legend>
+  <p class="muted small" style="margin:0 0 6px 0">
+    브라우저에서 직접 파일을 업로드합니다. 사내 DLP/보안 정책으로
+    파일 선택 단계가 차단되면 <b>위의 [폴더 재스캔]</b>
+    {% if import_enabled %} 또는 <b>아래 [서버 경로에서 가져오기]</b>{% endif %}
+    를 사용하세요.
+  </p>
   <form id="upload-form" enctype="multipart/form-data">
     <div class="upload-mode">
       <label>
@@ -102,8 +123,8 @@
   </table>
   {% else %}
   <p class="muted">
-    아직 등록된 영상이 없습니다. 위 <code>media/</code> 폴더에 영상을 떨어뜨리고
-    <b>[폴더 재스캔]</b>을 누르세요.
+    아직 등록된 영상이 없습니다. <code>media/</code> 폴더에 영상을 떨어뜨리고
+    <b>[폴더 재스캔]</b>을 누르거나 위 <b>[업로드]</b>를 사용하세요.
   </p>
   {% endif %}
 </fieldset>
@@ -163,6 +184,9 @@
           &nbsp;&nbsp;
           tail <input type="number" step="0.1" name="tail_skip_sec" id="b_tail_skip_sec"
                       value="0" min="0" style="width:80px"> 초
+          <span class="muted small">
+            (head + tail이 영상 길이를 넘거나 영상이 1초 미만이면 자동으로 전체 추출)
+          </span>
         </td>
       </tr>
 
@@ -188,43 +212,19 @@
   </form>
 </fieldset>
 
-<details>
-  <summary class="muted small">브라우저에서 직접 업로드 (보조 — 사내 정책으로 차단될 수 있음)</summary>
-  <fieldset>
-    <legend>영상 업로드 (보조)</legend>
-    <form id="upload-form" enctype="multipart/form-data">
-      <div class="upload-mode">
-        <label>
-          <input type="radio" name="upload-mode" value="files" checked>
-          파일 선택 <span class="muted">(Ctrl/Shift로 여러 개)</span>
-        </label>
-        &nbsp;&nbsp;
-        <label>
-          <input type="radio" name="upload-mode" value="folder">
-          폴더 선택 <span class="muted">(영상 파일만 자동 필터)</span>
-        </label>
-      </div>
-      <div class="upload-inputs">
-        <input type="file" id="upload-input-files" multiple
-               accept="video/*,.mp4,.mov,.avi,.mkv,.webm,.m4v">
-        <input type="file" id="upload-input-folder" multiple
-               webkitdirectory directory mozdirectory style="display:none">
-      </div>
-      <p>
-        <button type="submit" class="btn">업로드</button>
-        <span class="muted mono" id="upload-status">(최대 {{ max_upload_mb }} MB / 파일)</span>
-      </p>
-    </form>
-  </fieldset>
-</details>
-
 {% endblock %}
 
 {% block scripts %}
 <script>
   Admin.bindRescan();
   Admin.bindRefreshList();
+  Admin.bindUpload(
+    document.getElementById('upload-form'),
+    document.getElementById('upload-status')
+  );
   Admin.bindDeleteVideo();
+  Admin.bindCheckboxSelection();
+  Admin.bindBatchExtract();
   {% if import_enabled %}
   Admin.bindImport({
     scanBtn:     document.getElementById('import-scan-btn'),
