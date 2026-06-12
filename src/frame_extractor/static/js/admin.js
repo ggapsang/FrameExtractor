@@ -184,6 +184,156 @@
     });
   }
 
+  // --- Rescan media folder --------------------------------------------
+  function bindRescan() {
+    const btn = document.getElementById('btn-rescan');
+    const statusEl = document.getElementById('rescan-status');
+    if (!btn) return;
+    btn.addEventListener('click', async function () {
+      btn.disabled = true;
+      if (statusEl) statusEl.textContent = 'scanning...';
+      try {
+        const r = await jsonFetch('/api/videos/rescan', { method: 'POST' });
+        const a   = (r.added || []).length;
+        const sR  = (r.skipped_registered || []).length;
+        const sNV = (r.skipped_non_video || []).length;
+        const rm  = (r.removed || []).length;
+        const parts = [a + ' added'];
+        if (sR)  parts.push(sR + ' already registered');
+        if (sNV) parts.push(sNV + ' non-video');
+        if (rm)  parts.push(rm + ' removed (gone from folder)');
+        if (statusEl) statusEl.textContent = parts.join(', ') + ' — reloading';
+        setTimeout(function () { location.reload(); }, 700);
+      } catch (e) {
+        if (statusEl) statusEl.textContent = 'failed: ' + e.message;
+        btn.disabled = false;
+      }
+    });
+  }
+
+  // --- Plain list refresh ---------------------------------------------
+  // Just reloads the page. Use when you only want to see updates from
+  // other tabs / running jobs without touching the host folder.
+  function bindRefreshList() {
+    const btn = document.getElementById('btn-refresh-list');
+    if (!btn) return;
+    btn.addEventListener('click', function () {
+      location.reload();
+    });
+  }
+
+  // --- Checkbox selection ---------------------------------------------
+  function getSelectedVideoIds() {
+    return Array.from(document.querySelectorAll('.video-check:checked'))
+      .map(function (el) { return el.dataset.id; });
+  }
+
+  function updateBatchVisibility() {
+    const ids = getSelectedVideoIds();
+    const fs = document.getElementById('batch-extract-fieldset');
+    const cnt = document.getElementById('batch-count');
+    if (fs) fs.style.display = (ids.length > 0) ? '' : 'none';
+    if (cnt) cnt.textContent = '(선택 ' + ids.length + '개)';
+    const btn = document.getElementById('btn-batch-submit');
+    if (btn) {
+      btn.disabled = (ids.length === 0);
+      btn.textContent = '선택한 ' + (ids.length || 0) + '개 영상 추출 시작';
+    }
+  }
+
+  function bindCheckboxSelection() {
+    const all = document.getElementById('check-all');
+    const checks = document.querySelectorAll('.video-check');
+    if (all) {
+      all.addEventListener('change', function () {
+        checks.forEach(function (c) { c.checked = all.checked; });
+        updateBatchVisibility();
+      });
+    }
+    checks.forEach(function (c) {
+      c.addEventListener('change', function () {
+        // If user unchecks one, also uncheck "all"
+        if (!c.checked && all) all.checked = false;
+        updateBatchVisibility();
+      });
+    });
+    updateBatchVisibility();
+  }
+
+  // --- Batch extract --------------------------------------------------
+  function bindBatchExtract() {
+    const form = document.getElementById('batch-form');
+    if (!form) return;
+    const statusEl = document.getElementById('batch-status');
+    const modeSel = document.getElementById('b_sampling_mode');
+
+    function applyModeRows() {
+      const mode = modeSel ? modeSel.value : 'uniform';
+      document.querySelectorAll('.b-row-uniform').forEach(function (el) {
+        el.style.display = (mode === 'uniform') ? '' : 'none';
+      });
+      document.querySelectorAll('.b-row-random').forEach(function (el) {
+        el.style.display = (mode === 'random_n') ? '' : 'none';
+      });
+    }
+    if (modeSel) modeSel.addEventListener('change', applyModeRows);
+    applyModeRows();
+
+    form.addEventListener('submit', async function (ev) {
+      ev.preventDefault();
+      const ids = getSelectedVideoIds();
+      if (!ids.length) {
+        statusEl.textContent = '선택된 영상이 없습니다';
+        return;
+      }
+
+      const fd = new FormData(form);
+      const params = {};
+      const numFields = [
+        'target_fps', 'interval_sec',
+        'resize_w', 'resize_h',
+        'head_skip_sec', 'tail_skip_sec',
+        'random_n', 'seed',
+      ];
+      fd.forEach(function (v, k) {
+        if (numFields.indexOf(k) >= 0) {
+          const s = String(v).trim();
+          if (s === '') return;
+          const n = Number(s);
+          if (!isNaN(n)) params[k] = n;
+        } else {
+          params[k] = v;
+        }
+      });
+      params.format = 'png';
+
+      statusEl.textContent = 'submitting ' + ids.length + ' job(s)...';
+      try {
+        const r = await jsonFetch('/api/jobs/batch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ video_ids: ids, params: params }),
+        });
+        const c = (r.created || []).length;
+        const f = (r.failed || []).length;
+        const parts = [c + ' jobs queued'];
+        if (f) parts.push(f + ' failed');
+        statusEl.textContent = parts.join(', ');
+        if (f) {
+          const detail = r.failed.map(function (x) {
+            return '· ' + x.video_id.slice(0, 8) + ' — ' + x.error;
+          }).join('\n');
+          alert('일부 실패:\n' + detail);
+        }
+        if (c > 0) {
+          setTimeout(function () { location.reload(); }, 800);
+        }
+      } catch (e) {
+        statusEl.textContent = 'error: ' + e.message;
+      }
+    });
+  }
+
   // --- Delete video ----------------------------------------------------
   function bindDeleteVideo() {
     document.querySelectorAll('[data-action="delete-video"]').forEach(function (btn) {
